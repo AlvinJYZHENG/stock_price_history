@@ -8,23 +8,27 @@ on:
   # 允许手动触发工作流进行测试
   workflow_dispatch:
 
+# 添加环境变量以兼容 Node.js 24 环境，消除弃用警告
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   update-csv:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 升级了 actions/checkout 到 v5
+      # 升级到 v6 以适配最新的 GitHub Actions 运行时
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           # 必须拉取完整历史，以便脚本正确读取 CSV
           fetch-depth: 0
 
-      # 2. 升级了 actions/setup-python 到 v5
+      # 升级到 v6
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.11' # 建议使用较新的 Python 版本
+          python-version: '3.12' # 使用更新的 Python 版本以确保兼容性
 
       - name: Install dependencies
         run: |
