@@ -1,0 +1,44 @@
+name: Update Stock Prices
+
+on:
+  schedule:
+    # 使用 Cron 表达式
+    # 注意：GitHub Actions 默认使用 UTC 时间。
+    # 如果你需要北京时间 (UTC+8) 早上 8:00，这里应该设为 00:00 UTC
+    # 格式: 分 时 日 月 周
+    - cron: '0 0 * * *' 
+  
+  # 允许手动触发工作流进行测试
+  workflow_dispatch:
+
+jobs:
+  update-csv:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          # 必须拉取完整历史，以便脚本正确读取 CSV
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run script
+        run: python update_stocks.py
+
+      - name: Commit and push if changed
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+          git add stock_price_history.csv
+          # 只有当文件确实有变化时才提交，避免空提交报错
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update stock prices: $(date +'%Y-%m-%d')" && git push)
