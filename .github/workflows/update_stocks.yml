@@ -2,13 +2,9 @@ name: Update Stock Prices
 
 on:
   schedule:
-    # 北京时间每天早上 8:00 运行 (UTC 0点)
     - cron: '0 0 * * *'
-  
-  # 允许手动触发工作流进行测试
   workflow_dispatch:
 
-# 添加环境变量以兼容 Node.js 24 环境，消除弃用警告
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -17,31 +13,48 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 升级到 v6 以适配最新的 GitHub Actions 运行时
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          # 必须拉取完整历史，以便脚本正确读取 CSV
           fetch-depth: 0
 
-      # 升级到 v6
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12' # 使用更新的 Python 版本以确保兼容性
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run script
-        run: python update_stocks.py
+      # --- 修改开始 ---
+      - name: Run script and capture output
+        id: run_script
+        run: |
+          # 运行脚本，将标准输出和错误输出都保存到 log.txt 文件
+          python update_stocks.py 2>&1 | tee log.txt
+          # 记录脚本的退出码
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true # 即使这一步失败，也继续执行下一步
+
+      - name: Show detailed error log
+        if: steps.run_script.outputs.exit_code != '0'
+        run: |
+          echo "### ❌ 脚本运行失败，详细错误日志如下：" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat log.txt >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          # 在控制台也打印一遍，方便直接查看
+          echo "脚本运行失败，退出码: ${{ steps.run_script.outputs.exit_code }}"
+          cat log.txt
+          exit 1 # 最后再让工作流失败
+      # --- 修改结束 ---
 
       - name: Commit and push if changed
+        if: steps.run_script.outputs.exit_code == '0'
         run: |
           git config --global user.email "action@github.com"
           git config --global user.name "GitHub Action"
           git add stock_price_history.csv
-          # 只有当文件确实有变化时才提交
           git diff --quiet && git diff --staged --quiet || (git commit -m "Update stock prices: $(date +'%Y-%m-%d')" && git push)
