@@ -1,14 +1,9 @@
 name: Update Stock Prices
 
-# --- 添加开始：授予写入权限 ---
-permissions:
-  contents: write
-# --- 添加结束 ---
-
 on:
   schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
+    - cron: '0 0 * * *'  # 每天 UTC 0点执行
+  workflow_dispatch:     # 允许手动触发
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -16,58 +11,68 @@ env:
 jobs:
   update-csv:
     runs-on: ubuntu-latest
-
+    
+    # 关键修复1：在JOB层级设置权限
+    permissions:
+      contents: write  # 必须明确授予写入权限
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-
+          fetch-depth: 0  # 获取完整历史记录
+          token: ${{ secrets.GITHUB_TOKEN }}  # 使用token检出
+        
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-
+      
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
+      
       - name: Run script
         id: run_script
         run: |
           python update_stocks.py 2>&1 | tee log.txt
           echo "exit_code=$?" >> $GITHUB_OUTPUT
         continue-on-error: true
-
-      - name: Show detailed error log
+      
+      - name: Show error log
         if: steps.run_script.outputs.exit_code != '0'
         run: |
-          echo "### ❌ 脚本运行失败，详细错误日志如下：" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          cat log.txt >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "::error::Script failed! See log below"
           cat log.txt
           exit 1
-
-      - name: Commit and push if changed
+      
+      - name: Commit and push changes
         if: steps.run_script.outputs.exit_code == '0'
         run: |
-          git config --global user.email "action@github.com"
-          git config --global user.name "GitHub Action"
+          # 配置Git身份
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          if [ -f stock_price_history.csv ]; then
-            echo "发现文件 stock_price_history.csv，准备提交..."
-            git add stock_price_history.csv
-            
-            if git diff --staged --quiet; then
-              echo "文件没有变化，跳过提交。"
-            else
-              git commit -m "Update stock prices: $(date +'%Y-%m-%d')"
-              git push
-              echo "提交成功！"
-            fi
-          else
-            echo "错误：脚本运行成功但未生成 stock_price_history.csv 文件！"
+          # 检查文件状态
+          if [ ! -f stock_price_history.csv ]; then
+            echo "::error::Required file stock_price_history.csv not found!"
             exit 1
           fi
+          
+          # 添加变更
+          git add stock_price_history.csv
+          
+          # 检查是否有实际变更
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            # 提交变更
+            git commit -m "Update stock prices: $(date -u +'%Y-%m-%d %H:%M UTC')"
+            
+            # 关键修复2：使用带认证的push
+            git push origin HEAD:${GITHUB_REF#refs/heads/}
+          fi
+        env:
+          # 关键修复3：注入认证token
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
