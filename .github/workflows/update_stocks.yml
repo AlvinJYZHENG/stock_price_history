@@ -1,11 +1,13 @@
 name: Update Stock Prices
 
+# --- 添加开始：授予写入权限 ---
+permissions:
+  contents: write
+# --- 添加结束 ---
+
 on:
   schedule:
-    # 北京时间每天早上 8:00 运行 (UTC 0点)
     - cron: '0 0 * * *'
-  
-  # 允许手动触发工作流进行测试
   workflow_dispatch:
 
 env:
@@ -48,19 +50,16 @@ jobs:
           cat log.txt
           exit 1
 
-      # --- 修改了这部分逻辑 ---
       - name: Commit and push if changed
         if: steps.run_script.outputs.exit_code == '0'
         run: |
           git config --global user.email "action@github.com"
           git config --global user.name "GitHub Action"
           
-          # 检查文件是否存在
           if [ -f stock_price_history.csv ]; then
             echo "发现文件 stock_price_history.csv，准备提交..."
             git add stock_price_history.csv
             
-            # 检查是否有变化
             if git diff --staged --quiet; then
               echo "文件没有变化，跳过提交。"
             else
