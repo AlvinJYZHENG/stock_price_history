@@ -7,163 +7,135 @@ from datetime import datetime, timedelta
 
 # --- 配置区域 ---
 # 你可以在这里定义默认要监控的股票代码 (Yahoo Finance 格式)
-# 例如: 苹果(AAPL), 微软(MSFT), 腾讯(0700.HK), 茅台(600519.SS)
-# 暂时只测试AAPL，避免速率限制
-DEFAULT_TICKERS = ["AAPL"]
-# DEFAULT_TICKERS = ["AAPL", "MSFT", "0700.HK", "600519.SS"]
-CSV_FILE = "stock_price_history.csv"
+DEFAULT_TICKERS = ["AAPL", "MSFT", "600519.SS", "0700.HK"]
+CSV_FILE = "stock_price_history.csv"  # 保持原文件名
 # ----------------
+
+def get_stock_name_yf(symbol):
+    """
+    使用 yfinance 获取股票名称
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+        # 优先获取 longName (全称)，如果没有则获取 shortName (简称)
+        name = info.get('longName') or info.get('shortName')
+        return name
+    except Exception as e:
+        # print(f"获取 {symbol} 名称失败: {e}") # 静默失败，避免刷屏
+        return symbol # 失败则返回代码本身
 
 def download_with_retry(ticker, start_date, end_date, max_retries=5):
     """
-    下载股票数据，带重试机制和速率限制
+    下载股票数据，带重试机制
     """
     for retry in range(max_retries):
         try:
-            # 添加延迟避免过于频繁的请求（包括第一次尝试）
-            # 使用指数退避策略，初始延迟更长
+            # 延迟策略
             wait_time = min(300, (2 ** retry) * 2 + random.uniform(2, 5))
             if retry > 0:
                 print(f"重试 {retry}/{max_retries}: {ticker}，等待 {wait_time:.1f} 秒...")
             else:
-                print(f"开始下载 {ticker}，等待 {wait_time:.1f} 秒以避免速率限制...")
+                print(f"开始下载 {ticker}，等待 {wait_time:.1f} 秒...")
             time.sleep(wait_time)
 
             data = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=False)
 
-            # 检查数据是否为空
             if data.empty:
-                print(f"警告: {ticker} 返回空数据，可能是速率限制")
-                # 如果是空数据，等待更长时间再重试
+                print(f"警告: {ticker} 返回空数据")
                 if retry < max_retries - 1:
-                    extra_wait = min(60, 30 * (retry + 1))
-                    print(f"空数据，额外等待 {extra_wait} 秒后重试...")
-                    time.sleep(extra_wait)
-                continue  # 继续重试
+                    time.sleep(min(60, 30 * (retry + 1)))
+                continue
 
-            # 提取复权收盘价（如果不存在则使用普通收盘价）
+            # 提取收盘价
             if isinstance(data.columns, pd.MultiIndex):
-                # 尝试获取 Adj Close，如果不存在则使用 Close
-                if ('Adj Close', ticker) in data.columns:
-                    adj_close = data['Adj Close']
+                if ('Close', ticker) in data.columns:
+                    close_price = data['Close']
                 else:
-                    adj_close = data['Close']
-                # 对于多只股票返回MultiIndex的情况（实际不会发生在此函数，但保留）
-                if isinstance(adj_close.columns, pd.MultiIndex):
-                    adj_close = adj_close[ticker]
+                    close_price = data['Adj Close'] if ('Adj Close', ticker) in data.columns else data['Close']
+                if isinstance(close_price.columns, pd.MultiIndex):
+                    close_price = close_price[ticker]
             else:
-                # 单层列索引
-                if 'Adj Close' in data.columns:
-                    adj_close = data['Adj Close']
+                if 'Close' in data.columns:
+                    close_price = data['Close']
                 else:
-                    adj_close = data['Close']
+                    close_price = data['Adj Close']
 
-            # 再次检查提取的数据是否为空
-            if adj_close.empty:
-                print(f"警告: {ticker} 提取的收盘价数据为空")
+            if close_price.empty:
                 if retry < max_retries - 1:
-                    extra_wait = min(60, 30 * (retry + 1))
-                    print(f"空数据，额外等待 {extra_wait} 秒后重试...")
-                    time.sleep(extra_wait)
-                continue  # 继续重试
+                    time.sleep(min(60, 30 * (retry + 1)))
+                continue
 
-            print(f"成功下载 {ticker}，数据行数: {len(adj_close)}")
-            return adj_close
+            print(f"成功下载 {ticker}，数据行数: {len(close_price)}")
+            return close_price
 
         except Exception as e:
-            error_msg = str(e)
-            print(f"下载 {ticker} 失败 (尝试 {retry+1}/{max_retries}): {error_msg}")
-
-            # 如果是速率限制错误，等待更长时间
-            if "Rate limited" in error_msg or "Too Many Requests" in error_msg:
-                extra_wait = min(5, 2 * (retry + 1))
-                print(f"速率限制检测到，额外等待 {extra_wait} 秒...")
-                time.sleep(extra_wait)
-
+            print(f"下载 {ticker} 失败 (尝试 {retry+1}/{max_retries}): {str(e)}")
             if retry == max_retries - 1:
-                print(f"重试 {max_retries} 次后仍失败，跳过 {ticker}")
                 return None
-            # 继续重试
+            time.sleep(min(5, 2 * (retry + 1)))
 
     return None
 
 def get_stock_data():
     # 1. 确定日期范围
-    # 目标：从 2016/1/1 开始，或者从 CSV 中最后一行日期的下一天开始
     start_date = "2016-01-01"
+    existing_df = pd.DataFrame()
     
-    # 检查文件是否存在
+    # 检查文件是否存在并读取旧数据
     if os.path.exists(CSV_FILE):
-        df = pd.read_csv(CSV_FILE, index_col=0, parse_dates=True)
-        # 确保索引是 datetime 类型
-        if not isinstance(df.index, pd.DatetimeIndex):
-            df.index = pd.to_datetime(df.index)
+        # 注意：这里读取的是包含表头行（代码、名称）的文件
+        # 我们需要跳过前两行来读取实际的日期索引
+        try:
+            existing_df = pd.read_csv(CSV_FILE, index_col=0, skiprows=2, parse_dates=True)
+            if not isinstance(existing_df.index, pd.DatetimeIndex):
+                existing_df.index = pd.to_datetime(existing_df.index)
             
-        # 获取 CSV 中最新的日期
-        if not df.empty:
-            last_date = df.index.max().date()
-            yesterday = datetime.now().date() - timedelta(days=1)
-            
-            # 如果最新数据已经是昨天，则无需更新
-            if last_date >= yesterday:
-                print(f"数据已是最新 (最新日期: {last_date})，跳过更新。")
-                return
-            
-            # 从 CSV 最后一天之后开始下载
-            start_date = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
-            print(f"检测到已有数据，将从 {start_date} 开始增量更新...")
-    else:
-        # 文件不存在，创建一个新的 DataFrame
-        df = pd.DataFrame()
-        print("文件不存在，将创建新文件。")
+            if not existing_df.empty:
+                last_date = existing_df.index.max().date()
+                yesterday = datetime.now().date() - timedelta(days=1)
+                
+                if last_date >= yesterday:
+                    print(f"数据已是最新 (最新日期: {last_date})，跳过更新。")
+                    return
+                
+                start_date = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
+                print(f"检测到已有数据，将从 {start_date} 开始增量更新...")
+        except Exception as e:
+            print(f"读取旧文件出错: {e}，将重新创建。")
 
-    # 2. 确定需要下载的股票列表
-    # 如果文件存在，获取现有的列名（股票代码）；否则使用默认列表
-    tickers_to_check = list(df.columns) if not df.empty else DEFAULT_TICKERS
-    
-    # 合并默认列表和现有列表，防止代码丢失
+    # 2. 确定股票列表
+    # 从旧数据的列名获取，如果没有则用默认
+    tickers_to_check = list(existing_df.columns) if not existing_df.empty else DEFAULT_TICKERS
     all_tickers = list(set(tickers_to_check + DEFAULT_TICKERS))
     print(f"准备更新以下股票: {all_tickers}")
 
-    # 3. 下载数据
-    # 结束日期设为今天（yfinance 会自动处理，通常不包含当天实时数据，取到昨天收盘）
     end_date = datetime.now().strftime("%Y-%m-%d")
 
-    # 逐个下载股票数据，避免速率限制
+    # 3. 下载数据
     adj_close_list = []
     successful_tickers = []
 
     for i, ticker in enumerate(all_tickers):
         print(f"正在下载 {ticker} ({i+1}/{len(all_tickers)})...")
-
-        # 使用重试机制下载单只股票数据
         data = download_with_retry(ticker, start_date, end_date)
 
         if data is not None:
-            # 确保数据是Series或DataFrame格式
             if isinstance(data, pd.Series):
-                # Series转换为DataFrame，列名为股票代码
                 data_df = pd.DataFrame({ticker: data})
             else:
-                # 已经是DataFrame
                 data_df = data
-
             adj_close_list.append(data_df)
             successful_tickers.append(ticker)
-        else:
-            print(f"跳过 {ticker}，下载失败")
-
-        # 添加随机延迟避免速率限制（除非是最后一只股票）
+        
         if i < len(all_tickers) - 1:
-            delay = random.uniform(1, 3)  # 1-3秒随机延迟
-            time.sleep(delay)
+            time.sleep(random.uniform(1, 3))
 
     if not adj_close_list:
         print("所有股票下载都失败，无数据可保存")
         return
 
-    # 4. 合并所有股票数据
-    # 使用pd.concat一次性合并所有DataFrame，确保外连接包含所有日期
+    # 4. 合并数据
     try:
         if len(adj_close_list) == 1:
             adj_close_combined = adj_close_list[0]
@@ -171,31 +143,47 @@ def get_stock_data():
             adj_close_combined = pd.concat(adj_close_list, axis=1, join='outer')
     except Exception as e:
         print(f"合并数据时出错: {e}")
-        # 回退到逐列合并
-        adj_close_combined = pd.DataFrame()
-        for data_df in adj_close_list:
-            if adj_close_combined.empty:
-                adj_close_combined = data_df
-            else:
-                adj_close_combined = pd.concat([adj_close_combined, data_df], axis=1, join='outer')
+        return
 
-    print(f"成功下载 {len(successful_tickers)}/{len(all_tickers)} 只股票: {successful_tickers}")
-
-    # 5. 合并数据到主 DataFrame
+    # 5. 合并到主 DataFrame
     # 将新下载的数据追加到原有数据
-    df = pd.concat([df, adj_close_combined])
+    final_raw_df = pd.concat([existing_df, adj_close_combined])
 
-    # 去重（以防万一日期重叠）
-    df = df[~df.index.duplicated(keep='last')]
+    # 去重和排序
+    final_raw_df = final_raw_df[~final_raw_df.index.duplicated(keep='last')]
+    final_raw_df = final_raw_df.sort_index()
 
-    # 按日期排序
-    df = df.sort_index()
-
-    # 6. 保存 CSV
-    # 格式化为 YYYY/MM/DD
-    df.index = df.index.strftime('%Y/%m/%d')
-    df.to_csv(CSV_FILE)
-    print(f"成功更新并保存数据到 {CSV_FILE}，最新行数: {len(df)}")
+    # --- 核心修改部分：格式化并保存 ---
+    
+    print("正在生成带名称的最终报表...")
+    
+    # 确保列顺序一致
+    final_columns = list(final_raw_df.columns)
+    
+    # 第一行：股票代码
+    header_row = pd.Series(final_columns, index=final_columns)
+    
+    # 第二行：股票名称
+    name_row_data = []
+    for ticker in final_columns:
+        name = get_stock_name_yf(ticker)
+        name_row_data.append(name)
+    
+    name_row = pd.Series(name_row_data, index=final_columns)
+    
+    # 数据行：四舍五入到小数点后4位
+    data_part = final_raw_df[final_columns].copy()
+    data_part = data_part.applymap(lambda x: round(x, 4))
+    
+    # 拼接：表头 + 名称 + 数据
+    final_output = pd.concat([header_row.to_frame().T, name_row.to_frame().T, data_part])
+    
+    # 设置索引名称（日期格式）
+    final_output.index = ["股票代码", "股票名称"] + [d.strftime('%Y/%m/%d') for d in data_part.index]
+    
+    # 6. 保存 CSV (直接覆盖原文件)
+    final_output.to_csv(CSV_FILE, encoding='utf-8-sig')
+    print(f"成功更新并保存数据到 {CSV_FILE}，最新行数: {len(final_output)}")
 
 if __name__ == "__main__":
     get_stock_data()
