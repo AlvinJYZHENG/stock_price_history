@@ -69,27 +69,23 @@ def update_csv():
             price_data[ticker] = prices
         time.sleep(0.3)  # 基础延迟
     
-    # 3. 合并价格数据
+    # 3. 合并价格数据（**核心修改：删除填充逻辑**）
     if not price_data:
         print("❌ 所有股票下载失败")
         return
     
-    # 创建包含所有日期的DataFrame
+    # 创建包含所有日期的DataFrame（仅保留各股票实际有数据的日期）
     all_dates = set()
     for ts in price_data.values():
         all_dates.update(ts.index)
-    
     sorted_dates = sorted(all_dates)
     df_prices = pd.DataFrame(index=sorted_dates, columns=tickers)
     
-    # 填充价格数据
+    # 填充价格数据（**仅将存在的价格填入对应位置，不主动填充缺失值**）
     for ticker, prices in price_data.items():
-        df_prices[ticker] = prices
+        df_prices[ticker] = prices  # 直接赋值，保留原数据的NaN（空值）
     
-    # 前向填充缺失
-    df_prices = df_prices.ffill().bfill()  # 先前向填充（用前值补缺失），再后向填充（用后值补剩余缺失）
-    
-    # 4. 构建输出
+    # 4. 构建输出（保持原空值留白逻辑）
     output_lines = []
     
     # 第一行: ticker + 股票代码
@@ -100,9 +96,10 @@ def update_csv():
     names_row = ["name"] + [stock_names[t] for t in tickers]
     output_lines.append(",".join(names_row))
     
-    # 数据行: 日期 + 价格
+    # 数据行: 日期 + 价格（**空值保持留白**）
     for date in sorted_dates:
         date_str = date.strftime("%Y/%m/%d")
+        # 若价格为NaN则留空，否则保留4位小数
         prices = [f"{df_prices.loc[date, t]:.4f}" if not pd.isna(df_prices.loc[date, t]) else "" 
                  for t in tickers]
         output_lines.append(",".join([date_str] + prices))
