@@ -86,10 +86,8 @@ def update_csv():
     for ticker, prices in price_data.items():
         df_prices[ticker] = prices
     
-    # 前向填充缺失值
-    df_prices = df_prices.fillna(method=None).ffill().bfill()  
-
-
+    # 前向填充缺失
+    df_prices = df_prices.ffill().bfill()  # 先前向填充（用前值补缺失），再后向填充（用后值补剩余缺失）
     
     # 4. 构建输出
     output_lines = []
