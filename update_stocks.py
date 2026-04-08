@@ -12,22 +12,27 @@ START_DATE = "2016-01-01"
 # ----------------
 
 def get_stock_info(ticker):
-    """获取股票价格和名称（仅保留价格用于数据行，名称不再用于第二行）"""
+    """获取股票名称（去逗号）和价格数据"""
     try:
         tkr = yf.Ticker(ticker)
         time.sleep(random.uniform(0.5, 1.5))  # 随机延迟避免API限流
+        
+        # 获取公司名称（优先长名称， fallback到短名称或ticker）
+        raw_name = tkr.info.get('longName') or tkr.info.get('shortName') or ticker
+        # 关键修复：去除名称中的所有逗号（避免CSV列错位）
+        clean_name = raw_name.replace(',', '')  # 移除英文逗号
         
         # 获取历史收盘价（仅保留START_DATE后的数据）
         hist = tkr.history(start=START_DATE, actions=False)
         if hist.empty:
             print(f"⚠️ 警告: {ticker} 无有效历史数据")
-            return ticker, pd.Series(dtype=float)
+            return clean_name, pd.Series(dtype=float)
             
-        return ticker, hist['Close']  # 仅返回ticker和价格（名称不再使用）
+        return clean_name, hist['Close']
     
     except Exception as e:
         print(f"❌ 获取{ticker}失败: {str(e)}")
-        return ticker, pd.Series(dtype=float)
+        return ticker, pd.Series(dtype=float)  # 异常时用ticker作为名称
 
 def update_csv():
     # 1. 正确读取现有CSV的股票代码（仅提取"ticker"到"name"之间的有效代码）
@@ -57,11 +62,13 @@ def update_csv():
     
     print(f"🎯 最终股票列表: {tickers}")
 
-    # 2. 下载股票价格数据（不再下载公司名称）
-    price_data = {}
+    # 2. 下载股票数据（名称+价格，名称已去逗号）
+    stock_names = {}  # 存储处理后的公司名称（无逗号）
+    price_data = {}   # 存储价格数据
     
     for ticker in tickers:
-        _, prices = get_stock_info(ticker)  # 忽略返回的名称（因第二行不再需要）
+        name, prices = get_stock_info(ticker)
+        stock_names[ticker] = name  # 名称已自动去逗号
         if not prices.empty:
             price_data[ticker] = prices
         time.sleep(0.3)  # 基础延迟
@@ -81,16 +88,16 @@ def update_csv():
     for ticker, prices in price_data.items():
         df_prices[ticker] = prices  # 自动对齐日期，无数据则为NaN
     
-    # 4. 生成CSV内容（严格遵循你的要求）
+    # 4. 生成CSV内容（第二行恢复公司名称，已去逗号）
     output_lines = []
     
     # 第1行：表头（ticker + 股票代码）
     header = ["ticker"] + tickers
     output_lines.append(",".join(header))
     
-    # 第2行：仅保留"name"（无公司名称）
-    name_row = ["name"]  # 第二行第一格留"name"，后面无内容
-    output_lines.append(",".join(name_row))
+    # 第2行：name + 处理后的公司名称（已去逗号）
+    names_row = ["name"] + [stock_names[t] for t in tickers]
+    output_lines.append(",".join(names_row))
     
     # 第3行及以后：日期 + 各股票收盘价（每行一个日期）
     for date in sorted_dates:
@@ -105,7 +112,7 @@ def update_csv():
     with open(CSV_FILE, 'w', encoding='utf-8-sig') as f:
         f.write("\n".join(output_lines))
     
-    print(f"✅ 成功更新 {CSV_FILE}，包含 {len(sorted_dates)} 个交易日数据（第二行仅保留'name'）")
+    print(f"✅ 成功更新 {CSV_FILE}，包含 {len(sorted_dates)} 个交易日数据（第二行公司名称已去逗号）")
 
 if __name__ == "__main__":
     update_csv()
