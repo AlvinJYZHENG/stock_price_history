@@ -3,9 +3,10 @@ import yfinance as yf
 import os
 import time
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- 配置区域 ---
+DEFAULT_TICKERS = ["AAPL", "MSFT", "600519.SS", "0700.HK"]
 CSV_FILE = "stock_price_history.csv"
 # ----------------
 
@@ -53,25 +54,23 @@ def download_full_history(ticker, start_date="2016-01-01"):
         return None
 
 def get_stock_data():
-    # 1. 获取股票代码列表 (只读第一行)
-    if not os.path.exists(CSV_FILE):
-        print(f"错误: 文件 {CSV_FILE} 不存在。请先创建包含股票代码的文件。")
-        return
-
-    try:
-        # 关键修改：nrows=0 表示只读取表头行（第一行），不读取数据
-        # 这样 df.columns 就是 ["AAPL", "MSFT", ...]
-        df_header = pd.read_csv(CSV_FILE, nrows=0)
-        target_tickers = list(df_header.columns)
-        
-        if not target_tickers:
-            print("错误: CSV 文件第一行为空。")
-            return
-            
-        print(f"检测到股票代码: {target_tickers}")
-    except Exception as e:
-        print(f"读取文件失败: {e}")
-        return
+    # 1. 获取股票代码列表
+    # 策略：只读取第一行，忽略后面的所有内容
+    target_tickers = DEFAULT_TICKERS.copy()
+    
+    if os.path.exists(CSV_FILE):
+        try:
+            # 读取第一行作为 header，nrows=0 表示不读取数据行
+            # 这样可以只获取列名（股票代码）
+            temp_df = pd.read_csv(CSV_FILE, nrows=0)
+            # 将文件中的代码和默认代码合并，防止遗漏
+            file_tickers = list(temp_df.columns)
+            target_tickers = list(set(file_tickers + DEFAULT_TICKERS))
+            print(f"从文件中检测到代码: {file_tickers}")
+        except Exception as e:
+            print(f"读取文件头失败，使用默认列表: {e}")
+    
+    print(f"本次任务将更新以下股票: {target_tickers}")
 
     # 2. 全量下载数据
     all_data_series = []
@@ -90,44 +89,42 @@ def get_stock_data():
         return
 
     # 3. 合并数据
+    # 使用 outer join 确保所有日期都被包含
     combined_df = pd.concat(all_data_series, axis=1, join='outer')
     combined_df = combined_df.sort_index() # 按日期排序
 
     # 4. 格式化输出
     print("正在生成最终报表...")
     
-    # --- 第一部分：读取已有的代码行 ---
-    # 我们重新读取第一行，保持原样
-    # skiprows=[1] 是为了跳过旧文件中的"名称行"，只取"代码行"作为列名
-    # 但这里我们直接用 pd.read_csv 读第一行作为 Series
-    code_row = pd.read_csv(CSV_FILE, nrows=1).iloc[0]
-    # 确保索引（列名）顺序一致
-    code_row = code_row[target_tickers] 
-
-    # --- 第二部分：生成新的名称行 ---
-    print("正在获取最新股票名称...")
-    name_row_list = []
-    for ticker in target_tickers:
-        name = get_stock_name_yf(ticker)
-        name_row_list.append(name)
-        time.sleep(0.5) 
-    name_row = pd.Series(name_row_list, index=target_tickers)
+    final_columns = list(combined_df.columns)
     
-    # --- 第三部分：处理股价数据 ---
-    # 确保列顺序与代码行一致
-    df_data = combined_df[target_tickers].copy()
-    # 四舍五入到小数点后4位
+    # 第一行：股票代码 (保持不变)
+    row_codes = pd.Series(final_columns, index=final_columns)
+    
+    # 第二行：股票名称 (每次重新匹配)
+    print("正在获取最新股票名称...")
+    row_names_list = []
+    for ticker in final_columns:
+        name = get_stock_name_yf(ticker)
+        row_names_list.append(name)
+        time.sleep(0.5) # 获取名称也稍微延迟一下
+    row_names = pd.Series(row_names_list, index=final_columns)
+    
+    # 数据部分：四舍五入到小数点后4位
+    df_data = combined_df[final_columns].copy()
+    # 处理可能的 NaN 值，虽然 yfinance 通常返回连续数据，但以防万一
+    # 注意：applymap 在 Pandas 新版本中推荐使用 map，但 applymap 对 DataFrame 更通用
     df_data = df_data.applymap(lambda x: round(x, 4))
     
-    # 5. 组装最终 DataFrame
+    # 拼接最终结果
     # 结构：[代码行, 名称行, 数据行...]
-    final_output = pd.concat([code_row.to_frame().T, name_row.to_frame().T, df_data])
+    final_output = pd.concat([row_codes.to_frame().T, row_names.to_frame().T, df_data])
     
-    # 设置索引
+    # 设置索引：前两行是表头，后面是日期
     date_index = [d.strftime('%Y/%m/%d') for d in df_data.index]
     final_output.index = ["股票代码", "股票名称"] + date_index
 
-    # 6. 强制覆盖写入
+    # 5. 强制覆盖写入
     final_output.to_csv(CSV_FILE, encoding='utf-8-sig')
     print(f"成功覆盖写入 {CSV_FILE}，总行数: {len(final_output)}")
 
