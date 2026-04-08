@@ -8,7 +8,7 @@ from datetime import datetime
 # --- 配置区域 ---
 DEFAULT_TICKERS = ["AAPL", "MSFT", "0700.HK", "600519.SS"]  # 补充示例港股/A股代码
 CSV_FILE = "stock_price_history.csv"
-START_DATE = "2026-01-01"  # 注意：若需真实数据请修改为历史日期（如"2023-01-01"）
+START_DATE = "2018-01-01"  # 注意：若需真实数据请修改为历史日期（如"2018-01-01"）
 # ----------------
 
 def get_stock_info(ticker):
