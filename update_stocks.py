@@ -6,27 +6,29 @@ import random
 from datetime import datetime
 
 # --- 配置区域 ---
-DEFAULT_TICKERS = ["AAPL","MSFT"]
+DEFAULT_TICKERS = ["AAPL", "MSFT", "0700.HK", "600519.SS"]  # 补充示例港股/A股代码
 CSV_FILE = "stock_price_history.csv"
-START_DATE = "2026-01-01"
+START_DATE = "2026-01-01"  # 注意：若需真实数据请修改为历史日期（如"2023-01-01"）
 # ----------------
 
 def get_stock_info(ticker):
-    """获取股票名称（去逗号）和价格数据"""
+    """获取股票名称（去逗号）和价格数据（修复时区问题）"""
     try:
         tkr = yf.Ticker(ticker)
         time.sleep(random.uniform(0.5, 1.5))  # 随机延迟避免API限流
         
         # 获取公司名称（优先长名称， fallback到短名称或ticker）
         raw_name = tkr.info.get('longName') or tkr.info.get('shortName') or ticker
-        # 关键修复：去除名称中的所有逗号（避免CSV列错位）
-        clean_name = raw_name.replace(',', '')  # 移除英文逗号
+        clean_name = raw_name.replace(',', '')  # 移除名称中的逗号（避免CSV错位）
         
         # 获取历史收盘价（仅保留START_DATE后的数据）
         hist = tkr.history(start=START_DATE, actions=False)
         if hist.empty:
             print(f"⚠️ 警告: {ticker} 无有效历史数据")
             return clean_name, pd.Series(dtype=float)
+            
+        # 关键修复：移除日期索引的时区信息（解决跨市场日期重复问题）
+        hist.index = hist.index.tz_localize(None)  # 转为无时区的"朴素日期"
             
         return clean_name, hist['Close']
     
@@ -35,7 +37,7 @@ def get_stock_info(ticker):
         return ticker, pd.Series(dtype=float)  # 异常时用ticker作为名称
 
 def update_csv():
-    # 1. 正确读取现有CSV的股票代码（仅提取"ticker"到"name"之间的有效代码）
+    # 1. 读取现有CSV的股票代码（提取有效代码）
     tickers = []
     
     if os.path.exists(CSV_FILE):
@@ -64,7 +66,7 @@ def update_csv():
 
     # 2. 下载股票数据（名称+价格，名称已去逗号）
     stock_names = {}  # 存储处理后的公司名称（无逗号）
-    price_data = {}   # 存储价格数据
+    price_data = {}   # 存储价格数据（键：ticker，值：无时区的Close序列）
     
     for ticker in tickers:
         name, prices = get_stock_info(ticker)
@@ -80,7 +82,7 @@ def update_csv():
     # 3. 合并价格数据（按日期对齐，空值留白）
     all_dates = set()
     for ts in price_data.values():
-        all_dates.update(ts.index)
+        all_dates.update(ts.index)  # 此时日期已无时区，同一日历日仅存一个对象
     sorted_dates = sorted(all_dates)  # 日期去重并排序
     
     # 构建DataFrame（行：日期，列：股票代码）
@@ -99,7 +101,7 @@ def update_csv():
     names_row = ["name"] + [stock_names[t] for t in tickers]
     output_lines.append(",".join(names_row))
     
-    # 第3行及以后：日期 + 各股票收盘价（每行一个日期）
+    # 第3行及以后：日期 + 各股票收盘价（每行一个日期，同一日期仅一行）
     for date in sorted_dates:
         date_str = date.strftime("%Y/%m/%d")  # 统一日期格式为YYYY/MM/DD
         price_values = []
@@ -112,7 +114,7 @@ def update_csv():
     with open(CSV_FILE, 'w', encoding='utf-8-sig') as f:
         f.write("\n".join(output_lines))
     
-    print(f"✅ 成功更新 {CSV_FILE}，包含 {len(sorted_dates)} 个交易日数据（第二行公司名称已去逗号）")
+    print(f"✅ 成功更新 {CSV_FILE}，包含 {len(sorted_dates)} 个交易日数据（同一日期仅一行）")
 
 if __name__ == "__main__":
     update_csv()
