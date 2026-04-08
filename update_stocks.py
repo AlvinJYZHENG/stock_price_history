@@ -6,9 +6,9 @@ import random
 from datetime import datetime
 
 # --- 配置区域 ---
-DEFAULT_TICKERS = ["AAPL", "MSFT", "600519.SS", "0700.HK"]
+DEFAULT_TICKERS = ["AAPL","MSFT"]
 CSV_FILE = "stock_price_history.csv"
-START_DATE = "2016-01-01"
+START_DATE = "2026-01-01"
 # ----------------
 
 def get_stock_info(ticker):
