@@ -12,20 +12,20 @@ START_DATE = "2016-01-01"
 # ----------------
 
 def get_stock_info(ticker):
-    """获取股票名称和价格数据（含异常处理与随机延迟）"""
+    """获取股票名称和价格数据（新增日期去重）"""
     try:
         tkr = yf.Ticker(ticker)
-        time.sleep(random.uniform(0.5, 1.5))  # 随机延迟避免API限流
+        time.sleep(random.uniform(0.5, 1.5))
         
-        # 获取公司名称（优先长名称， fallback到短名称或 ticker）
         name = tkr.info.get('longName') or tkr.info.get('shortName') or ticker
-        
-        # 获取历史收盘价（仅保留START_DATE后的数据）
         hist = tkr.history(start=START_DATE, actions=False)
+        
         if hist.empty:
-            print(f"⚠️ 警告: {ticker} 无有效历史数据")
+            print(f"⚠️ 警告: {ticker} 无有效数据")
             return name, pd.Series(dtype=float)
-            
+        
+        # 关键修复：去除重复日期（若存在）
+        hist = hist[~hist.index.duplicated(keep='first')]
         return name, hist['Close']
     
     except Exception as e:
@@ -33,24 +33,17 @@ def get_stock_info(ticker):
         return ticker, pd.Series(dtype=float)
 
 def update_csv():
-    # 1. 正确读取现有CSV的股票代码（仅提取"ticker"到"name"之间的有效代码）
+    # 1. 正确读取现有CSV的股票代码（同前）
     tickers = []
-    
     if os.path.exists(CSV_FILE):
         try:
             with open(CSV_FILE, 'r', encoding='utf-8-sig') as f:
                 first_line = f.readline().strip()
                 if first_line:
                     parts = first_line.split(',')
-                    # 关键修复：找到"name"列位置，仅提取其之前的股票代码
-                    if 'name' in parts:
-                        name_idx = parts.index('name')
-                        valid_codes = parts[1:name_idx]  # 跳过第一个"ticker"列
-                    else:
-                        valid_codes = parts[1:]  # 无"name"时取所有后续列
-                    # 过滤空值与无效项
+                    name_idx = parts.index('name') if 'name' in parts else len(parts)
+                    valid_codes = parts[1:name_idx]
                     tickers = [code.strip() for code in valid_codes if code.strip() and code != 'ticker']
-                    
             print(f"📄 检测到现有股票代码: {tickers}")
         except Exception as e:
             print(f"⚠️ 读取文件头失败: {e}")
@@ -59,60 +52,47 @@ def update_csv():
     for t in DEFAULT_TICKERS:
         if t not in tickers:
             tickers.append(t)
-    
     print(f"🎯 最终股票列表: {tickers}")
 
-    # 2. 下载股票数据（名称+收盘价）
+    # 2. 下载数据（同前）
     stock_names = {}
     price_data = {}
-    
     for ticker in tickers:
         name, prices = get_stock_info(ticker)
         stock_names[ticker] = name
         if not prices.empty:
             price_data[ticker] = prices
-        time.sleep(0.3)  # 基础延迟
+        time.sleep(0.3)
     
     if not price_data:
-        print("❌ 所有股票下载失败，终止更新")
+        print("❌ 所有股票下载失败")
         return
-    
-    # 3. 合并价格数据（按日期对齐，空值留白）
+
+    # 3. 合并数据（新增日期去重）
     all_dates = set()
     for ts in price_data.values():
         all_dates.update(ts.index)
-    sorted_dates = sorted(all_dates)
+    sorted_dates = sorted(all_dates)  # 自动去重并排序
     
-    # 构建DataFrame（行：日期，列：股票代码）
     df_prices = pd.DataFrame(index=sorted_dates, columns=tickers)
     for ticker, prices in price_data.items():
-        df_prices[ticker] = prices  # 自动对齐日期，无数据则为NaN
-    
-    # 4. 生成CSV内容（规范格式：表头→名称行→数据行）
-    output_lines = []
-    
-    # 第1行：表头（ticker + 股票代码）
-    header = ["ticker"] + tickers
-    output_lines.append(",".join(header))
-    
-    # 第2行：公司名称（name + 对应名称）
-    names_row = ["name"] + [stock_names[t] for t in tickers]
-    output_lines.append(",".join(names_row))
-    
-    # 数据行：日期 + 各股票收盘价（空值留白）
+        df_prices[ticker] = prices  # 对齐日期，空值为NaN
+
+    # 4. 生成CSV（同前，确保每行一个日期）
+    output_lines = [
+        ",".join(["ticker"] + tickers),
+        ",".join(["name"] + [stock_names[t] for t in tickers])
+    ]
     for date in sorted_dates:
-        date_str = date.strftime("%Y/%m/%d")  # 统一日期格式
-        price_values = []
-        for t in tickers:
-            val = df_prices.loc[date, t]
-            price_values.append(f"{val:.4f}" if not pd.isna(val) else "")  # 保留4位小数
-        output_lines.append(",".join([date_str] + price_values))
+        date_str = date.strftime("%Y/%m/%d")
+        prices = [f"{df_prices.loc[date, t]:.4f}" if not pd.isna(df_prices.loc[date, t]) else "" for t in tickers]
+        output_lines.append(",".join([date_str] + prices))
     
-    # 5. 写入CSV（用utf-8-sig避免乱码）
+    # 5. 写入文件（同前）
     with open(CSV_FILE, 'w', encoding='utf-8-sig') as f:
         f.write("\n".join(output_lines))
     
-    print(f"✅ 成功更新 {CSV_FILE}，包含 {len(sorted_dates)} 个交易日数据")
+    print(f"✅ 成功更新 {CSV_FILE}，包含 {len(sorted_dates)} 个唯一交易日")
 
 if __name__ == "__main__":
     update_csv()
