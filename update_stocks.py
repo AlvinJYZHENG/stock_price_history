@@ -57,10 +57,10 @@ def update_csv():
         except Exception as e:
             print(f"⚠️ 读取文件头失败: {e}")
     
-    # 添加默认股票（去重）
-    for t in DEFAULT_TICKERS:
-        if t not in tickers:
-            tickers.append(t)
+    # 如果CSV中没有代码，则使用默认股票
+    if not tickers:
+        tickers = DEFAULT_TICKERS.copy()
+    # 否则直接使用CSV中的代码，不添加默认股票
     
     print(f"🎯 最终股票列表: {tickers}")
 
