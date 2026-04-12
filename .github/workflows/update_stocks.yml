@@ -54,12 +54,21 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          # 检查文件状态
-          if [ ! -f stock_price_history.csv ]; then
-            echo "::error::Required file stock_price_history.csv not found!"
-            exit 1
-          fi
-          
+          #检查所有三个文件是否存在 ---
+          files_to_check=(
+            "stock_price_history.csv"
+            "stock_price_history_hk.csv"
+            "stock_price_history_us.csv"
+          )
+
+          for file in "${files_to_check[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "::error::File not found: $file"
+              exit 1
+            fi
+          done
+          # --- 检查结束 ---
+                    
           # 添加所有CSV文件（三个文件）
           git add stock_price_history.csv stock_price_history_hk.csv stock_price_history_us.csv
           
